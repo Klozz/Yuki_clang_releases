@@ -128,6 +128,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: downloaded_toolchain/*.tar.gz
+          tag_name: "${{ steps.check_release.outputs.release_tag }}"
           draft: false
           prerelease: false
         env:
