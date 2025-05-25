@@ -118,6 +118,7 @@ jobs:
             - Binutils version: ${{ steps.get_toolchain_info.outputs.BINUTILS_VERSION }}
             - LLVM commit: `${{ steps.get_toolchain_info.outputs.LLVM_COMMIT_HASH }}`
             - SHA256 of clang binary: `${{ steps.get_toolchain_info.outputs.CLANG_BINARY_SHA256 }}`
+            - S3 box: "${{ github.event.inputs.s3_toolchain_url }}"
 
             ---
             _This release was created via GitHub Actions, downloading the toolchain from S3._
