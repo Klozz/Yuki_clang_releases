@@ -63,7 +63,7 @@ jobs:
 
 
           # --- Get Clang Info ---
-          CLANG_BINARY_PATH="$EXTRACTED_PATH/bin/clang" # Based on your 'less.txt' output
+          CLANG_BINARY_PATH="$EXTRACTED_PATH/bin/clang"
 
           if [ ! -f "$CLANG_BINARY_PATH" ]; then
             echo "Error: Clang binary not found at expected path: $CLANG_BINARY_PATH"
@@ -85,12 +85,14 @@ jobs:
           echo "Clang --version output:"
           echo "$CLANG_VERSION_OUTPUT"
 
+          # Extract clang version (e.g., "clang version 21.0.0git+bolt+pgo+polly")
           CLANG_VERSION=$(echo "$CLANG_VERSION_OUTPUT" | grep -oP 'clang version \K\d+\.\d+\.\d+git(?:\+\w+)*')
           if [[ -z "$CLANG_VERSION" ]]; then
             CLANG_VERSION="N/A"
           fi
 
-          LLVM_COMMIT_HASH=$(echo "$CLANG_VERSION_OUTPUT" | grep -oP 'based on LLVM \d+ until \K[a-f0-9]{40}')
+          # Extract LLVM commit hash from the new format: (https://github.com/llvm/llvm-project 49c39ef5891c8ca2ec0a5d0e5eaba21048318a78)
+          LLVM_COMMIT_HASH=$(echo "$CLANG_VERSION_OUTPUT" | grep -oP '\(https:\/\/github\.com\/llvm\/llvm-project\s+\K[a-f0-9]{40}')
           if [[ -z "$LLVM_COMMIT_HASH" ]]; then
             LLVM_COMMIT_HASH="N/A"
           fi
@@ -99,7 +101,7 @@ jobs:
 
           # --- Get Binutils Info ---
           BINUTILS_VERSION="N/A" # Default to N/A
-          LD_BINARY_PATH="$EXTRACTED_PATH/bin/ld" # Based on your 'less.txt' output
+          LD_BINARY_PATH="$EXTRACTED_PATH/bin/ld"
 
           if [ -f "$LD_BINARY_PATH" ]; then
             if [ ! -x "$LD_BINARY_PATH" ]; then
