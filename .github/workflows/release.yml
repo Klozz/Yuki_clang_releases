@@ -63,7 +63,7 @@ jobs:
 
 
           # --- Get Clang Info ---
-          CLANG_BINARY_PATH="$EXTRACTED_PATH/bin/clang"
+          CLANG_BINARY_PATH="$EXTRACTED_PATH/bin/clang" 
 
           if [ ! -f "$CLANG_BINARY_PATH" ]; then
             echo "Error: Clang binary not found at expected path: $CLANG_BINARY_PATH"
@@ -101,7 +101,7 @@ jobs:
 
           # --- Get Binutils Info ---
           BINUTILS_VERSION="N/A" # Default to N/A
-          LD_BINARY_PATH="$EXTRACTED_PATH/bin/ld"
+          LD_BINARY_PATH="$EXTRACTED_PATH/bin/ld" 
 
           if [ -f "$LD_BINARY_PATH" ]; then
             if [ ! -x "$LD_BINARY_PATH" ]; then
@@ -114,18 +114,20 @@ jobs:
               echo "LD --version output:"
               echo "$BINUTILS_VERSION_OUTPUT"
 
-              # Attempt to extract version like "2.44" from common patterns
-              BINUTILS_VERSION_MATCH=$(echo "$BINUTILS_VERSION_OUTPUT" | grep -oP 'GNU Binutils.*?\s(\d+\.\d+(\.\d+)?)\s' | head -n 1 | grep -oP '\d+\.\d+(\.\d+)?')
-              if [[ -n "$BINUTILS_VERSION_MATCH" ]]; then
-                BINUTILS_VERSION="$BINUTILS_VERSION_MATCH"
+              # Attempt to extract version for "GNU ld (GNU Binutils) 2.44"
+              BINUTILS_VERSION_TEMP=$(echo "$BINUTILS_VERSION_OUTPUT" | grep -oP 'GNU ld \(GNU Binutils\) \K\d+\.\d+(\.\d+)?')
+              if [[ -n "$BINUTILS_VERSION_TEMP" ]]; then
+                BINUTILS_VERSION="$BINUTILS_VERSION_TEMP"
               else
-                BINUTILS_VERSION_MATCH=$(echo "$BINUTILS_VERSION_OUTPUT" | grep -oP 'GNU ld \(GNU Binutils\) (\d+\.\d+(\.\d+)?)(?:\s|\n|$)' | head -n 1 | grep -oP '\d+\.\d+(\.\d+)?')
-                if [[ -n "$BINUTILS_VERSION_MATCH" ]]; then
-                  BINUTILS_VERSION="$BINUTILS_VERSION_MATCH"
+                # Fallback for other common patterns like "GNU Binutils <version>"
+                BINUTILS_VERSION_TEMP=$(echo "$BINUTILS_VERSION_OUTPUT" | grep -oP 'GNU Binutils.*? (\d+\.\d+(\.\d+)?)(?:\s|\n|$)' | head -n 1 | grep -oP '\d+\.\d+(\.\d+)?')
+                if [[ -n "$BINUTILS_VERSION_TEMP" ]]; then
+                  BINUTILS_VERSION="$BINUTILS_VERSION_TEMP"
                 else
-                  BINUTILS_VERSION_MATCH=$(echo "$BINUTILS_VERSION_OUTPUT" | grep -oP '(version|release) \K\d+\.\d+(\.\d+)?')
-                  if [[ -n "$BINUTILS_VERSION_MATCH" ]]; then
-                    BINUTILS_VERSION="$BINUTILS_VERSION_MATCH"
+                  # Fallback for just "version X.Y" or "release X.Y"
+                  BINUTILS_VERSION_TEMP=$(echo "$BINUTILS_VERSION_OUTPUT" | grep -oP '(version|release) \K\d+\.\d+(\.\d+)?')
+                  if [[ -n "$BINUTILS_VERSION_TEMP" ]]; then
+                    BINUTILS_VERSION="$BINUTILS_VERSION_TEMP"
                   fi
                 fi
               fi
