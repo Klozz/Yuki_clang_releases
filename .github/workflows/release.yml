@@ -85,10 +85,12 @@ jobs:
           echo "LLVM_COMMIT_HASH=$LLVM_COMMIT_HASH" >> "$GITHUB_OUTPUT"
           echo "CLANG_BINARY_SHA256=$CLANG_BINARY_SHA256" >> "$GITHUB_OUTPUT"
           echo "BINUTILS_VERSION=$BINUTILS_VERSION" >> "$GITHUB_OUTPUT"
+          echo "ARCHIVE_FILENAME=$FILENAME" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release (if not exists)
         id: create_release
         uses: actions/create-release@v1
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.ABISMO_DE_LOS_SECRETOS }}
         with:
@@ -106,10 +108,30 @@ jobs:
             _This release was created via GitHub Actions, downloading the toolchain from S3._
           draft: false
           prerelease: false
-      - name: Upload release asset
+
+      - name: Check if asset already exists
+        id: check_asset
+        run: |
+          set -euo pipefail
+          TAG_NAME="v${{ steps.get_toolchain_info.outputs.CLANG_VERSION_TAG_SAFE }}-${{ steps.datetime.outputs.timestamp }}"
+          FILENAME="${{ steps.get_toolchain_info.outputs.ARCHIVE_FILENAME }}"
+
+          RELEASE_API_URL="https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG_NAME"
+          RESPONSE=$(curl -s -H "Authorization: token ${{ secrets.ABISMO_DE_LOS_SECRETOS }}" "$RELEASE_API_URL")
+
+          if echo "$RESPONSE" | jq -e ".assets[]?.name == \"$FILENAME\"" >/dev/null; then
+            echo "Asset already exists: $FILENAME"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Asset does not exist yet"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload release asset (if not already uploaded)
+        if: steps.check_asset.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
-          files: downloaded_toolchain/*.tar.gz
+          files: downloaded_toolchain/${{ steps.get_toolchain_info.outputs.ARCHIVE_FILENAME }}
           tag_name: "v${{ steps.get_toolchain_info.outputs.CLANG_VERSION_TAG_SAFE }}-${{ steps.datetime.outputs.timestamp }}"
         env:
           GITHUB_TOKEN: ${{ secrets.ABISMO_DE_LOS_SECRETOS }}
