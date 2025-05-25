@@ -6,7 +6,7 @@ on:
       s3_toolchain_url:
         description: 'Direct S3 URL to the toolchain archive (.tar.gz or .zip)'
         required: true
-        default: 'YOUR_DEFAULT_S3_TOOLCHAIN_URL' # Replace with a default URL if you want.
+        default: 'YOUR_DEFAULT_S3_TOOLCHAIN_URL' # Replace with a default URL if you have one, or leave as is.
 
 jobs:
   release:
@@ -31,6 +31,7 @@ jobs:
 
           S3_TOOLCHAIN_URL="${{ github.event.inputs.s3_toolchain_url }}"
           DOWNLOAD_DIR="downloaded_toolchain"
+          EXTRACTED_PATH="$DOWNLOAD_DIR/extracted_clang" # This will be the root where the archive is extracted
 
           mkdir -p "$DOWNLOAD_DIR"
 
@@ -42,7 +43,6 @@ jobs:
 
           echo "Downloaded to: $DOWNLOAD_PATH"
 
-          EXTRACTED_PATH="$DOWNLOAD_DIR/extracted_clang"
           mkdir -p "$EXTRACTED_PATH"
 
           if [[ "$FILENAME" == *.tar.gz ]]; then
@@ -56,19 +56,27 @@ jobs:
             exit 1
           fi
           echo "Extraction complete."
+          echo "Contents of extracted_clang directory:"
+          ls -F "$EXTRACTED_PATH" || true # List top-level contents, continue if ls fails
+          echo "Contents of extracted_clang/bin directory:"
+          ls -F "$EXTRACTED_PATH/bin/" || true # List bin contents, continue if ls fails
+
 
           # --- Get Clang Info ---
-          CLANG_BINARY_PATH=""
-          find "$EXTRACTED_PATH" -type f -name "clang" -perm /u+x | while read -r f; do
-              if [ -f "$f" ]; then
-                  CLANG_BINARY_PATH="$f"
-                  break
-              fi
-          done
+          CLANG_BINARY_PATH="$EXTRACTED_PATH/bin/clang" # Based on your 'less.txt' output
 
-          if [[ -z "$CLANG_BINARY_PATH" ]]; then
-            echo "Error: Clang binary not found in the extracted archive."
+          if [ ! -f "$CLANG_BINARY_PATH" ]; then
+            echo "Error: Clang binary not found at expected path: $CLANG_BINARY_PATH"
             exit 1
+          fi
+          if [ ! -x "$CLANG_BINARY_PATH" ]; then
+            echo "Error: Clang binary is not executable: $CLANG_BINARY_PATH"
+            chmod +x "$CLANG_BINARY_PATH" # Try to make it executable if it's not
+            if [ ! -x "$CLANG_BINARY_PATH" ]; then
+              echo "Error: Failed to make Clang binary executable."
+              exit 1
+            fi
+            echo "Clang binary made executable."
           fi
 
           echo "Found Clang binary at: $CLANG_BINARY_PATH"
@@ -91,48 +99,47 @@ jobs:
 
           # --- Get Binutils Info ---
           BINUTILS_VERSION="N/A" # Default to N/A
-          LD_BINARY_PATH=""
-          # Search for 'ld' binary (linker) within the extracted toolchain
-          find "$EXTRACTED_PATH" -type f -name "ld" -perm /u+x | while read -r f; do
-              if [ -f "$f" ]; then
-                  LD_BINARY_PATH="$f"
-                  break
-              fi
-          done
+          LD_BINARY_PATH="$EXTRACTED_PATH/bin/ld" # Based on your 'less.txt' output
 
-          if [[ -n "$LD_BINARY_PATH" ]]; then
-            echo "Found LD binary at: $LD_BINARY_PATH"
-            BINUTILS_VERSION_OUTPUT=$("$LD_BINARY_PATH" --version 2>&1 || true) # Redirect stderr to stdout and continue on error
-            echo "LD --version output:"
-            echo "$BINUTILS_VERSION_OUTPUT"
+          if [ -f "$LD_BINARY_PATH" ]; then
+            if [ ! -x "$LD_BINARY_PATH" ]; then
+              echo "Warning: LD binary is not executable: $LD_BINARY_PATH. Attempting to make it executable."
+              chmod +x "$LD_BINARY_PATH"
+            fi
+            if [ -x "$LD_BINARY_PATH" ]; then
+              echo "Found LD binary at: $LD_BINARY_PATH"
+              BINUTILS_VERSION_OUTPUT=$("$LD_BINARY_PATH" --version 2>&1 || true) # Redirect stderr to stdout and continue on error
+              echo "LD --version output:"
+              echo "$BINUTILS_VERSION_OUTPUT"
 
-            # Attempt to extract version like "2.44" from "GNU ld (GNU Binutils for...) 2.44" or similar
-            BINUTILS_VERSION_MATCH=$(echo "$BINUTILS_VERSION_OUTPUT" | grep -oP 'GNU Binutils.*?\s(\d+\.\d+(\.\d+)?)\s' | head -n 1 | grep -oP '\d+\.\d+(\.\d+)?')
-            if [[ -n "$BINUTILS_VERSION_MATCH" ]]; then
-              BINUTILS_VERSION="$BINUTILS_VERSION_MATCH"
-            else
-              # Fallback for formats like "GNU ld (GNU Binutils) 2.44"
-              BINUTILS_VERSION_MATCH=$(echo "$BINUTILS_VERSION_OUTPUT" | grep -oP 'GNU ld \(GNU Binutils\) (\d+\.\d+(\.\d+)?)(?:\s|\n|$)' | head -n 1 | grep -oP '\d+\.\d+(\.\d+)?')
+              # Attempt to extract version like "2.44" from common patterns
+              BINUTILS_VERSION_MATCH=$(echo "$BINUTILS_VERSION_OUTPUT" | grep -oP 'GNU Binutils.*?\s(\d+\.\d+(\.\d+)?)\s' | head -n 1 | grep -oP '\d+\.\d+(\.\d+)?')
               if [[ -n "$BINUTILS_VERSION_MATCH" ]]; then
                 BINUTILS_VERSION="$BINUTILS_VERSION_MATCH"
               else
-                # Another fallback for just version number after some identifying text
-                BINUTILS_VERSION_MATCH=$(echo "$BINUTILS_VERSION_OUTPUT" | grep -oP '(version|release) \K\d+\.\d+(\.\d+)?')
+                BINUTILS_VERSION_MATCH=$(echo "$BINUTILS_VERSION_OUTPUT" | grep -oP 'GNU ld \(GNU Binutils\) (\d+\.\d+(\.\d+)?)(?:\s|\n|$)' | head -n 1 | grep -oP '\d+\.\d+(\.\d+)?')
                 if [[ -n "$BINUTILS_VERSION_MATCH" ]]; then
                   BINUTILS_VERSION="$BINUTILS_VERSION_MATCH"
+                else
+                  BINUTILS_VERSION_MATCH=$(echo "$BINUTILS_VERSION_OUTPUT" | grep -oP '(version|release) \K\d+\.\d+(\.\d+)?')
+                  if [[ -n "$BINUTILS_VERSION_MATCH" ]]; then
+                    BINUTILS_VERSION="$BINUTILS_VERSION_MATCH"
+                  fi
                 fi
               fi
+              echo "Extracted Binutils Version: $BINUTILS_VERSION"
+            else
+              echo "LD binary found but not executable after chmod attempt. Binutils version will be N/A."
             fi
-            echo "Extracted Binutils Version: $BINUTILS_VERSION"
           else
-            echo "LD binary not found. Binutils version will be N/A."
+            echo "LD binary not found at expected path: $LD_BINARY_PATH. Binutils version will be N/A."
           fi
 
 
           echo "CLANG_VERSION=$CLANG_VERSION" >> "$GITHUB_OUTPUT"
           echo "LLVM_COMMIT_HASH=$LLVM_COMMIT_HASH" >> "$GITHUB_OUTPUT"
           echo "CLANG_BINARY_SHA256=$CLANG_BINARY_SHA256" >> "$GITHUB_OUTPUT"
-          echo "BINUTILS_VERSION=$BINUTILS_VERSION" >> "$GITHUB_OUTPUT" # Now dynamic
+          echo "BINUTILS_VERSION=$BINUTILS_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         id: create_release
