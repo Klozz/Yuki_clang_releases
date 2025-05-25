@@ -49,7 +49,7 @@ jobs:
             echo "Extracting .tar.gz to: $EXTRACTED_PATH"
             tar -xzf "$DOWNLOAD_PATH" -C "$EXTRACTED_PATH"
           elif [[ "$FILENAME" == *.zip ]]; then
-            echo "Extracting .zip to: $EXTRACTED_PATH"
+            echo "Extracting .zip to: "$EXTRACTED_PATH""
             unzip "$DOWNLOAD_PATH" -d "$EXTRACTED_PATH"
           else
             echo "Unsupported archive format. Only .tar.gz and .zip are supported."
@@ -86,10 +86,17 @@ jobs:
           echo "$CLANG_VERSION_OUTPUT"
 
           # Extract clang version (e.g., "clang version 21.0.0git+bolt+pgo+polly")
-          CLANG_VERSION=$(echo "$CLANG_VERSION_OUTPUT" | grep -oP 'clang version \K\d+\.\d+\.\d+git(?:\+\w+)*')
-          if [[ -z "$CLANG_VERSION" ]]; then
-            CLANG_VERSION="N/A"
+          # Sanitize the version for tag_name
+          CLANG_VERSION_RAW=$(echo "$CLANG_VERSION_OUTPUT" | grep -oP 'clang version \K\d+\.\d+\.\d+git(?:\+\w+)*')
+          if [[ -z "$CLANG_VERSION_RAW" ]]; then
+            CLANG_VERSION_RAW="N/A"
+            CLANG_VERSION_TAG_SAFE="N-A" # Safe version for tag
+          else
+            CLANG_VERSION_TAG_SAFE=$(echo "$CLANG_VERSION_RAW" | sed 's/[^a-zA-Z0-9\._-]/_/g') # Replace special chars with underscore
+            # Optional: Further refinement if you want to replace '+' with '-'
+            CLANG_VERSION_TAG_SAFE=$(echo "$CLANG_VERSION_TAG_SAFE" | sed 's/+/-/g')
           fi
+          CLANG_VERSION="$CLANG_VERSION_RAW" # Keep original for release notes
 
           # Extract LLVM commit hash from the new format: (https://github.com/llvm/llvm-project 49c39ef5891c8ca2ec0a5d0e5eaba21048318a78)
           LLVM_COMMIT_HASH=$(echo "$CLANG_VERSION_OUTPUT" | grep -oP '\(https:\/\/github\.com\/llvm\/llvm-project\s+\K[a-f0-9]{40}')
@@ -139,8 +146,8 @@ jobs:
             echo "LD binary not found at expected path: $LD_BINARY_PATH. Binutils version will be N/A."
           fi
 
-
           echo "CLANG_VERSION=$CLANG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "CLANG_VERSION_TAG_SAFE=$CLANG_VERSION_TAG_SAFE" >> "$GITHUB_OUTPUT" # New output variable for tag
           echo "LLVM_COMMIT_HASH=$LLVM_COMMIT_HASH" >> "$GITHUB_OUTPUT"
           echo "CLANG_BINARY_SHA256=$CLANG_BINARY_SHA256" >> "$GITHUB_OUTPUT"
           echo "BINUTILS_VERSION=$BINUTILS_VERSION" >> "$GITHUB_OUTPUT"
@@ -151,7 +158,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.ABISMO_DE_LOS_SECRETOS }}
         with:
-          tag_name: "v${{ steps.get_toolchain_info.outputs.CLANG_VERSION}}-$(date +%Y%m%d%H%M%S)"
+          # Use the new CLANG_VERSION_TAG_SAFE for the tag_name
+          tag_name: "v${{ steps.get_toolchain_info.outputs.CLANG_VERSION_TAG_SAFE}}-$(date +%Y%m%d%H%M%S)"
           release_name: "Yuki Clang Toolchain Release - Clang ${{ steps.get_toolchain_info.outputs.CLANG_VERSION}}"
           body: |
             ## Changes in this version:
