@@ -90,7 +90,7 @@ jobs:
         id: check_release
         run: |
           set -euo pipefail
-          TAG="v${{ steps.get_toolchain_info.outputs.CLANG_VERSION_TAG_SAFE }}-${{ steps.datetime.outputs.timestamp }}"
+          TAG="v${{ steps.get_toolchain_info.outputs.CLANG_VERSION_TAG_SAFE }}-${{ steps.datetime.outputs.shortdate }}"
           echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
 
           response=$(curl -s -o /dev/null -w "%{http_code}" \
@@ -124,12 +124,43 @@ jobs:
           draft: false
           prerelease: false
 
-      - name: Upload release asset (.tar.gz)
-        uses: softprops/action-gh-release@v2
-        with:
-          files: downloaded_toolchain/*.tar.gz
-          tag_name: "${{ steps.check_release.outputs.release_tag }}"
-          draft: false
-          prerelease: false
+      - name: Upload release asset (.tar.gz) if not already uploaded
         env:
           GITHUB_TOKEN: ${{ secrets.ABISMO_DE_LOS_SECRETOS }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.check_release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          ASSET_PATH=$(echo downloaded_toolchain/*.tar.gz)
+          ASSET_NAME=$(basename "$ASSET_PATH")
+
+          echo "Getting release ID for tag $TAG"
+          RELEASE_ID=$(curl -s \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/releases/tags/$TAG" | jq -r '.id')
+
+          if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ]; then
+            echo "Error: Release ID not found for tag $TAG"
+            exit 1
+          fi
+
+          echo "Checking if asset $ASSET_NAME already uploaded..."
+          ASSET_EXISTS=$(curl -s \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/releases/$RELEASE_ID/assets" | jq -r --arg NAME "$ASSET_NAME" '.[] | select(.name == $NAME) | .name')
+
+          if [ "$ASSET_EXISTS" = "$ASSET_NAME" ]; then
+            echo "Asset $ASSET_NAME already uploaded, skipping upload."
+            exit 0
+          fi
+
+          echo "Uploading asset $ASSET_NAME ..."
+          curl --fail -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Content-Type: application/gzip" \
+            --data-binary @"$ASSET_PATH" \
+            "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=$ASSET_NAME"
+
+          echo "Upload finished."
