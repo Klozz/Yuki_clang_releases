@@ -1,0 +1,156 @@
+name: Create GitHub Release with S3 Toolchain Info
+
+on:
+  workflow_dispatch:
+    inputs:
+      s3_toolchain_url:
+        description: 'Direct S3 URL to the toolchain archive (.tar.gz or .zip)'
+        required: true
+        default: 'YOUR_DEFAULT_S3_TOOLCHAIN_URL' # Replace with a default URL if you want.
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install requests # 'curl', 'tar', 'unzip' are usually pre-installed on ubuntu-latest
+
+      - name: Download and Extract Toolchain, Get Clang/Binutils Info
+        id: get_toolchain_info
+        run: |
+          #!/bin/bash
+          set -euo pipefail
+
+          S3_TOOLCHAIN_URL="${{ github.event.inputs.s3_toolchain_url }}"
+          DOWNLOAD_DIR="downloaded_toolchain"
+
+          mkdir -p "$DOWNLOAD_DIR"
+
+          FILENAME=$(basename "$S3_TOOLCHAIN_URL")
+          DOWNLOAD_PATH="$DOWNLOAD_DIR/$FILENAME"
+
+          echo "Downloading toolchain from: $S3_TOOLCHAIN_URL"
+          curl -L -o "$DOWNLOAD_PATH" "$S3_TOOLCHAIN_URL"
+
+          echo "Downloaded to: $DOWNLOAD_PATH"
+
+          EXTRACTED_PATH="$DOWNLOAD_DIR/extracted_clang"
+          mkdir -p "$EXTRACTED_PATH"
+
+          if [[ "$FILENAME" == *.tar.gz ]]; then
+            echo "Extracting .tar.gz to: $EXTRACTED_PATH"
+            tar -xzf "$DOWNLOAD_PATH" -C "$EXTRACTED_PATH"
+          elif [[ "$FILENAME" == *.zip ]]; then
+            echo "Extracting .zip to: $EXTRACTED_PATH"
+            unzip "$DOWNLOAD_PATH" -d "$EXTRACTED_PATH"
+          else
+            echo "Unsupported archive format. Only .tar.gz and .zip are supported."
+            exit 1
+          fi
+          echo "Extraction complete."
+
+          # --- Get Clang Info ---
+          CLANG_BINARY_PATH=""
+          find "$EXTRACTED_PATH" -type f -name "clang" -perm /u+x | while read -r f; do
+              if [ -f "$f" ]; then
+                  CLANG_BINARY_PATH="$f"
+                  break
+              fi
+          done
+
+          if [[ -z "$CLANG_BINARY_PATH" ]]; then
+            echo "Error: Clang binary not found in the extracted archive."
+            exit 1
+          fi
+
+          echo "Found Clang binary at: $CLANG_BINARY_PATH"
+
+          CLANG_VERSION_OUTPUT=$("$CLANG_BINARY_PATH" --version)
+          echo "Clang --version output:"
+          echo "$CLANG_VERSION_OUTPUT"
+
+          CLANG_VERSION=$(echo "$CLANG_VERSION_OUTPUT" | grep -oP 'clang version \K\d+\.\d+\.\d+git(?:\+\w+)*')
+          if [[ -z "$CLANG_VERSION" ]]; then
+            CLANG_VERSION="N/A"
+          fi
+
+          LLVM_COMMIT_HASH=$(echo "$CLANG_VERSION_OUTPUT" | grep -oP 'based on LLVM \d+ until \K[a-f0-9]{40}')
+          if [[ -z "$LLVM_COMMIT_HASH" ]]; then
+            LLVM_COMMIT_HASH="N/A"
+          fi
+
+          CLANG_BINARY_SHA256=$(sha256sum "$CLANG_BINARY_PATH" | awk '{print $1}')
+
+          # --- Get Binutils Info ---
+          BINUTILS_VERSION="N/A" # Default to N/A
+          LD_BINARY_PATH=""
+          # Search for 'ld' binary (linker) within the extracted toolchain
+          find "$EXTRACTED_PATH" -type f -name "ld" -perm /u+x | while read -r f; do
+              if [ -f "$f" ]; then
+                  LD_BINARY_PATH="$f"
+                  break
+              fi
+          done
+
+          if [[ -n "$LD_BINARY_PATH" ]]; then
+            echo "Found LD binary at: $LD_BINARY_PATH"
+            BINUTILS_VERSION_OUTPUT=$("$LD_BINARY_PATH" --version 2>&1 || true) # Redirect stderr to stdout and continue on error
+            echo "LD --version output:"
+            echo "$BINUTILS_VERSION_OUTPUT"
+
+            # Attempt to extract version like "2.44" from "GNU ld (GNU Binutils for...) 2.44" or similar
+            BINUTILS_VERSION_MATCH=$(echo "$BINUTILS_VERSION_OUTPUT" | grep -oP 'GNU Binutils.*?\s(\d+\.\d+(\.\d+)?)\s' | head -n 1 | grep -oP '\d+\.\d+(\.\d+)?')
+            if [[ -n "$BINUTILS_VERSION_MATCH" ]]; then
+              BINUTILS_VERSION="$BINUTILS_VERSION_MATCH"
+            else
+              # Fallback for formats like "GNU ld (GNU Binutils) 2.44"
+              BINUTILS_VERSION_MATCH=$(echo "$BINUTILS_VERSION_OUTPUT" | grep -oP 'GNU ld \(GNU Binutils\) (\d+\.\d+(\.\d+)?)(?:\s|\n|$)' | head -n 1 | grep -oP '\d+\.\d+(\.\d+)?')
+              if [[ -n "$BINUTILS_VERSION_MATCH" ]]; then
+                BINUTILS_VERSION="$BINUTILS_VERSION_MATCH"
+              else
+                # Another fallback for just version number after some identifying text
+                BINUTILS_VERSION_MATCH=$(echo "$BINUTILS_VERSION_OUTPUT" | grep -oP '(version|release) \K\d+\.\d+(\.\d+)?')
+                if [[ -n "$BINUTILS_VERSION_MATCH" ]]; then
+                  BINUTILS_VERSION="$BINUTILS_VERSION_MATCH"
+                fi
+              fi
+            fi
+            echo "Extracted Binutils Version: $BINUTILS_VERSION"
+          else
+            echo "LD binary not found. Binutils version will be N/A."
+          fi
+
+
+          echo "CLANG_VERSION=$CLANG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "LLVM_COMMIT_HASH=$LLVM_COMMIT_HASH" >> "$GITHUB_OUTPUT"
+          echo "CLANG_BINARY_SHA256=$CLANG_BINARY_SHA256" >> "$GITHUB_OUTPUT"
+          echo "BINUTILS_VERSION=$BINUTILS_VERSION" >> "$GITHUB_OUTPUT" # Now dynamic
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.ABISMO_DE_LOS_SECRETOS }}
+        with:
+          tag_name: "v${{ steps.get_toolchain_info.outputs.CLANG_VERSION}}-$(date +%Y%m%d%H%M%S)"
+          release_name: "Yuki Clang Toolchain Release - Clang ${{ steps.get_toolchain_info.outputs.CLANG_VERSION}}"
+          body: |
+            ## Changes in this version:
+
+            Based on LLVM ${{ steps.get_toolchain_info.outputs.CLANG_VERSION}} until ${{ steps.get_toolchain_info.outputs.LLVM_COMMIT_HASH}}
+            binutils version: ${{ steps.get_toolchain_info.outputs.BINUTILS_VERSION}}
+            clang version: ${{ steps.get_toolchain_info.outputs.CLANG_VERSION}}
+            Clang Binary SHA256: `${{ steps.get_toolchain_info.outputs.CLANG_BINARY_SHA256}}`
+
+            ---
+            _This release was created via GitHub Actions, downloading from S3._
+          draft: false
+          prerelease: false
